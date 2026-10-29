@@ -1055,7 +1055,7 @@ function readSecret(name) {
   }
 }
 
-ipcMain.handle('secret:set', (_e, name, value) => {
+function writeSecret(name, value) {
   const { safeStorage } = require('electron');
   const all = readJSON(SECRETS_FILE(), {});
   if (!value) {
@@ -1066,10 +1066,105 @@ ipcMain.handle('secret:set', (_e, name, value) => {
     all[name] = { enc: false, value: String(value) };
   }
   writeJSON(SECRETS_FILE(), all);
+}
+
+ipcMain.handle('secret:set', (_e, name, value) => {
+  writeSecret(name, value);
   return true;
 });
 
 ipcMain.handle('secret:has', (_e, name) => !!readSecret(name));
+
+// ---------------------------------------------------------------------------
+// MCP server (mcp.js): an AI app on this computer can read the library, and
+// never write it. Off until the writer turns it on (File → MCP Server…), and
+// only while Show More Features is on. Its settings are this computer's
+// (settings.json), its token a secret like the cover-art key. The window
+// answers the questions (MCP in app.js): it holds the open book's unsaved
+// words and NEO's own word count.
+// ---------------------------------------------------------------------------
+
+const NeoMcp = require('./mcp.js');
+const mcpServer = NeoMcp.createServer({
+  ask: askPage,
+  version: () => app.getVersion(),
+  log: (err) => logError('mcp', err)
+});
+let mcpPage = null; // the window's page, which says when it's ready to answer
+const mcpWaiting = new Map();
+let mcpSeq = 0;
+ipcMain.on('mcp:ready', (e) => { mcpPage = e.sender; });
+ipcMain.on('mcp:answer', (_e, id, out) => {
+  const wait = mcpWaiting.get(id);
+  if (!wait) return;
+  mcpWaiting.delete(id);
+  clearTimeout(wait.timer);
+  if (out && out.ok) wait.resolve(out.result);
+  else wait.reject(new Error((out && out.error) || 'NEO couldn’t answer'));
+});
+function askPage(tool, args) {
+  return new Promise((resolve, reject) => {
+    if (!mcpPage || mcpPage.isDestroyed()) {
+      reject(new Error('NEO’s window isn’t open. Open it and ask again.'));
+      return;
+    }
+    const id = ++mcpSeq;
+    const timer = setTimeout(() => { mcpWaiting.delete(id); reject(new Error('NEO took too long to answer')); }, 20000);
+    mcpWaiting.set(id, { resolve, reject, timer });
+    mcpPage.send('mcp:request', { id, tool, args });
+  });
+}
+const mcpSettings = () => ({ enabled: false, port: NeoMcp.DEFAULT_PORT, ...(readSettings().mcp || {}) });
+function mcpToken() {
+  let token = readSecret('mcp-token');
+  if (!token) {
+    token = NeoMcp.newToken();
+    writeSecret('mcp-token', token);
+  }
+  return token;
+}
+// running exactly while it's turned on and Show More Features is; one change
+// at a time, so a quick off and on can't leave two listening
+let mcpQueue = Promise.resolve();
+function syncMcp() {
+  const run = async () => {
+    const s = mcpSettings();
+    if (!(s.enabled && moreState)) { await mcpServer.stop(); return; }
+    const now = mcpServer.status();
+    if (now.running && now.port === s.port) return;
+    const st = await mcpServer.start({ port: s.port, token: mcpToken() });
+    if (st.error) logError('mcp', new Error(`port ${s.port}: ${st.error}`));
+  };
+  mcpQueue = mcpQueue.then(run, run);
+  return mcpQueue;
+}
+function mcpStatus() {
+  const s = mcpSettings();
+  const st = mcpServer.status();
+  return {
+    enabled: !!s.enabled,
+    port: s.port,
+    running: st.running,
+    error: s.enabled && moreState && !st.running ? (st.error || 'stopped') : '',
+    url: `http://127.0.0.1:${s.port}/mcp`,
+    token: s.enabled ? mcpToken() : ''
+  };
+}
+ipcMain.handle('mcp:status', () => mcpStatus());
+ipcMain.handle('mcp:configure', async (_e, opts = {}) => {
+  const now = mcpSettings();
+  const port = Number.isInteger(opts.port) && opts.port >= 1024 && opts.port <= 65535 ? opts.port : now.port;
+  const settings = readSettings();
+  settings.mcp = { enabled: opts.enabled === undefined ? !!now.enabled : !!opts.enabled, port };
+  writeSettings(settings);
+  if (opts.newToken) {
+    const token = NeoMcp.newToken();
+    writeSecret('mcp-token', token);
+    mcpServer.setToken(token);
+  }
+  await syncMcp();
+  return mcpStatus();
+});
 
 // One painting at a time per book; a second request while one is running
 // simply gets the running one's answer.
@@ -2529,6 +2624,7 @@ ipcMain.on('more:state', (_e, on) => {
   if (on === moreState) return;
   moreState = on;
   try { buildMenu(); } catch (err) { logError('menu', err); }
+  syncMcp().catch((err) => logError('mcp', err));
 });
 // a template without the `more` items, and without the separators they leave
 // at an end or side by side
@@ -2635,6 +2731,7 @@ function buildMenu() {
         { label: t('Take Snapshot'), accelerator: 'CmdOrCtrl+S', registerAccelerator: false, click: () => sendToWindow({ type: 'snapshot' }) },
         { type: 'separator' },
         { more: true, label: t('Cover Art…'), click: () => sendToWindow({ type: 'coverArt' }) },
+        { more: true, label: t('MCP Server…'), click: () => sendToWindow({ type: 'mcpServer' }) },
         {
           label: t('Goals…'),
           accelerator: 'CmdOrCtrl+,',

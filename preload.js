@@ -42,6 +42,15 @@ contextBridge.exposeInMainWorld('neo', {
   paintCover: (bookId, text, options) => ipcRenderer.invoke('cover:paint', bookId, text, options),
   setSecret: (name, value) => ipcRenderer.invoke('secret:set', name, value),
   hasSecret: (name) => ipcRenderer.invoke('secret:has', name),
+  // File → MCP Server…: the dialog's settings, and the questions an AI app
+  // asks (read-only; answered by MCP in app.js)
+  mcpStatus: () => ipcRenderer.invoke('mcp:status'),
+  mcpConfigure: (opts) => ipcRenderer.invoke('mcp:configure', opts),
+  onMcpRequest: (cb) => {
+    ipcRenderer.on('mcp:request', (_e, req) => cb(req));
+    ipcRenderer.send('mcp:ready');
+  },
+  mcpAnswer: (id, out) => ipcRenderer.send('mcp:answer', id, out),
   importFiles: (paths) => ipcRenderer.invoke('import:files', paths),
   pathForFile: (file) => webUtils.getPathForFile(file),
   fullscreenEscape: () => ipcRenderer.invoke('fullscreen:escape'),

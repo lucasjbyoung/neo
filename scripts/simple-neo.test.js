@@ -63,7 +63,7 @@ const menu = (template, name) => template.find((m) => m.label === name).submenu;
 
 // the items behind the switch, and some that simple NEO keeps
 const MORE = ['Plain Text (.txt)', 'Markdown (.md)', 'Web Page (.html)', 'Manuscript Format…', 'Chapter Titles Only',
-  'Cover Art…', 'New Books Open To', 'Import Chapters…', 'Reshelve a Book…', 'Spellcheck Language', 'Other Font…',
+  'Cover Art…', 'MCP Server…', 'New Books Open To', 'Import Chapters…', 'Reshelve a Book…', 'Spellcheck Language', 'Other Font…',
   'Align Paragraph', 'Show Pages', 'Two Pages Side by Side', 'Page Width', 'Non-Breaking Marks', 'Poetry Paragraph',
   'Markdown Emphasis', 'Focus Mode', 'Vim Keys', 'Brighter Interface', 'Language'];
 const SIMPLE = ['PDF (.pdf)', 'Word (.docx)', 'EPUB (.epub)', 'Paperback for KDP…', 'Email Draft to Myself', 'Email Settings…',

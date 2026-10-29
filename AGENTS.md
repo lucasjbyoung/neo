@@ -160,6 +160,16 @@ NEO Library/
 
 App settings and the cover-art API key live in Electron `userData` (`settings.json`, `secrets.json`), not in the library. The key is encrypted with `safeStorage` when the OS allows it. Do not write secrets into the library.
 
+## MCP server
+
+File → MCP Server… (behind Show More Features, off by default) lets an AI app on this computer read the library over the Model Context Protocol. It is read-only: the tools are `list_books`, `get_open_book`, `list_chapters`, `read_chapter`, `read_book`, `word_count`, `read_notes` and `search`, and none writes, moves or deletes. Don't add one that does.
+
+- `mcp.js` speaks the protocol (Streamable HTTP answered with plain JSON, no sessions) on 127.0.0.1 only. Every request needs the token from the dialog (`mcp-token` in `secrets.json`); a request from another origin, or whose Host isn't this computer, is refused. It needs nothing from Electron.
+- The window answers (MCP in `app.js`, through `mcp:request` / `mcp:answer`), so the open book's unsaved words are in the answers and the counts are NEO's own (`chapterWords`, `countWords`). Other books are read with the same `window.neo` calls the shelf uses.
+- The server runs while `settings.json`'s `mcp.enabled` is on and Show More Features is (`syncMcp` in `main.js`). Turning either off stops it.
+- `scripts/mcp-stdio.js` passes messages through for apps that only start MCP servers over stdio (Claude Desktop's config). It isn't packaged.
+- `scripts/mcp.test.js` (the protocol and the door); `npm run test:mcp` (`scripts/mcp.e2e.js`: two books, every tool over HTTP, unsaved words, nothing written by asking).
+
 Every book id, chapter id, and sidecar name passes through `libName()` in `main.js`. It allows one path segment and rejects `.`, `..`, slashes, and null bytes. Keep new files inside that helper.
 
 Every library write goes through `writeFileDurable`: `file.tmp`, fsync, then rename into place, so a power cut can't leave an empty file. `writeJSON` also keeps the last version that read whole as `file.bak`, and `readJSON` falls back on `.tmp`, then `.bak`. A `book.json` lost with no copy is rebuilt from the chapter files (`rebuildBookMeta`). There is no append and no partial chapter update.
