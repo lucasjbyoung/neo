@@ -1147,7 +1147,7 @@ function mcpStatus() {
     running: st.running,
     error: s.enabled && moreState && !st.running ? (st.error || 'stopped') : '',
     url: `http://127.0.0.1:${s.port}/mcp`,
-    token: s.enabled ? mcpToken() : ''
+    token: mcpToken()
   };
 }
 ipcMain.handle('mcp:status', () => mcpStatus());

@@ -15423,30 +15423,43 @@ async function openMcpServer() {
       </div>
       <p class="soft" id="mcp-note" style="margin:6px 0 0;font-size:12px"></p>
       <div style="text-align:right;margin-top:14px">
-        <button class="m-cancel btn-quiet" style="margin-right:10px">${t('Close')}</button>
+        <button class="m-cancel btn-quiet" style="margin-right:10px">${t('Cancel')}</button>
         <button class="m-ok btn-gold">${t('Save')}</button>
       </div>
     </div>`;
   document.body.appendChild(bd);
   const note = bd.querySelector('#mcp-note');
+  const on = bd.querySelector('#mcp-on');
   const show = (s) => {
     st = s;
+    on.checked = s.enabled;
     bd.querySelector('#mcp-details').hidden = !s.enabled;
     bd.querySelector('#mcp-url').value = s.url;
     bd.querySelector('#mcp-token').value = s.token;
     bd.querySelector('#mcp-cc').value = `claude mcp add --transport http neo ${s.url} --header "Authorization: Bearer ${s.token}"`;
     if (!s.enabled) note.textContent = t('Off. Nothing outside NEO can read your books.');
     else if (s.running) note.textContent = t('On, at {url}. Show More Features off turns it off too.', { url: s.url });
-    else if (s.error === 'in-use') note.textContent = t('Port {port} is in use by another program. Choose another and save.', { port: s.port });
+    else if (s.error === 'in-use') note.textContent = t('Port {port} is in use by another program. Choose another and save.', { port: String(s.port) });
     else note.textContent = t('The server couldn’t start ({error}).', { error: s.error || '?' });
   };
   show(st);
+  // ticked, the address and token show at once, to copy before saving
+  on.onchange = () => {
+    bd.querySelector('#mcp-details').hidden = !on.checked;
+    if (on.checked !== st.enabled) note.textContent = on.checked ? t('Save to turn it on.') : t('Save to turn it off.');
+    else show(st);
+  };
   const done = () => bd.remove();
   bd.querySelector('.m-cancel').onclick = done;
+  // Save closes the window, as Cover Art's does, and says what it did; a
+  // server that couldn't start keeps it open with the reason
   bd.querySelector('.m-ok').onclick = async () => {
     const port = parseInt(bd.querySelector('#mcp-port').value, 10);
     if (!(port >= 1024 && port <= 65535)) { toast(t('A port is a number from 1024 to 65535')); return; }
-    show(await window.neo.mcpConfigure({ enabled: bd.querySelector('#mcp-on').checked, port }));
+    const s = await window.neo.mcpConfigure({ enabled: on.checked, port });
+    if (s.enabled && !s.running) { show(s); return; }
+    done();
+    toast(s.enabled ? t('MCP server on, at {url}', { url: s.url }) : t('MCP server off'), 4000);
   };
   bd.querySelector('#mcp-new').onclick = async () => {
     show(await window.neo.mcpConfigure({ newToken: true }));

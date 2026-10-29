@@ -260,6 +260,50 @@ test('the dialog says it\'s on, and where', async () => {
   await js(`document.querySelector('.modal-backdrop .m-cancel').click()`);
 });
 
+test('Save closes the window and says what it did; ticking shows the token first', async () => {
+  const toastText = () => js(`document.getElementById('hint').textContent`);
+  await js('openMcpServer()');
+  await tick(200);
+  await js(`document.querySelector('.modal-backdrop .m-ok').click()`);
+  await tick(400);
+  assert.equal(await js(`!!document.getElementById('mcp-note')`), false, 'closed');
+  assert.match(await toastText(), new RegExp(`MCP server on, at http://127.0.0.1:${port}/mcp`));
+  await js('openMcpServer()');
+  await tick(200);
+  await js(`(() => { const c = document.getElementById('mcp-on'); c.checked = false; c.onchange(); })()`);
+  assert.equal(await js(`document.getElementById('mcp-details').hidden`), true);
+  assert.equal(await js(`document.getElementById('mcp-note').textContent`), 'Save to turn it off.');
+  await js(`document.querySelector('.modal-backdrop .m-ok').click()`);
+  await tick(400);
+  assert.equal(await js(`!!document.getElementById('mcp-note')`), false, 'closed');
+  assert.match(await toastText(), /MCP server off/);
+  await js('openMcpServer()');
+  await tick(200);
+  await js(`(() => { const c = document.getElementById('mcp-on'); c.checked = true; c.onchange(); })()`);
+  assert.equal(await js(`document.getElementById('mcp-details').hidden`), false, 'the address and token show before saving');
+  assert.equal(await js(`document.getElementById('mcp-token').value`), token);
+  await js(`document.querySelector('.modal-backdrop .m-ok').click()`);
+  await tick(400);
+  assert.equal((await js('window.neo.mcpStatus()')).running, true);
+});
+
+test('a port another program holds: the window stays open and says so', async () => {
+  const blocker = net.createServer();
+  const taken = await new Promise((resolve) => blocker.listen(0, '127.0.0.1', () => resolve(blocker.address().port)));
+  await js('openMcpServer()');
+  await tick(200);
+  await js(`document.getElementById('mcp-port').value = '${taken}'`);
+  await js(`document.querySelector('.modal-backdrop .m-ok').click()`);
+  await tick(400);
+  assert.match(await js(`document.getElementById('mcp-note').textContent`), new RegExp(`Port ${taken} is in use`));
+  await js(`document.getElementById('mcp-port').value = '${port}'`);
+  await js(`document.querySelector('.modal-backdrop .m-ok').click()`);
+  await tick(400);
+  assert.equal(await js(`!!document.getElementById('mcp-note')`), false);
+  await new Promise((resolve) => blocker.close(resolve));
+  assert.equal((await post({ jsonrpc: '2.0', id: 1, method: 'ping' })).status, 200);
+});
+
 test('Show More Features off turns the server off; on brings it back', async () => {
   await js('setMoreFeatures(false)');
   await tick(400);
