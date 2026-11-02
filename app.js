@@ -3721,6 +3721,7 @@ function splitChapterAt(body, chId, block, sel, was) {
     block = next;
   }
   while (blank(block.previousElementSibling) && block.previousElementSibling.previousElementSibling) block.previousElementSibling.remove();
+  const settle = holdDay();
   const parts = [];
   let n = block;
   while (n) {
@@ -3736,6 +3737,7 @@ function splitChapterAt(body, chId, block, sel, was) {
   chapterHTML[newId] = parts.join('') || '<p><br></p>';
   persistChapter(newId);
   renderChapters();
+  settle();
   focusChapterStart(newId);
   resetNativeUndo();
   // the writer's line stays where it was in the window, the new chapter's
@@ -4557,6 +4559,7 @@ document.addEventListener('keydown', (e) => {
 let dashJustSet = null; // the dash just set, for ⌘Z
 function dialogueDashKey(e, body) {
   if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
+  if (body.classList.contains('script-body')) return; // a script keeps the hyphens it is typed with (#460)
   const key = e.key === 'Enter' ? '' : e.key;
   if (key.length > 1) return;
   const sel = window.getSelection();
@@ -4688,19 +4691,22 @@ function smartKeys(e, body) {
 
   if (markdownEmphasis(e, body, range)) return;
   // German sets its dash as an en dash – like this –, so there -- makes
-  // one, and a third hyphen the em dash (#286)
+  // one, and a third hyphen the em dash (#286). A script keeps -- and ...
+  // as typed: that is how a screenplay writes a dash and a trailing off
+  // (and how Final Draft and Fountain read them, #460)
   const german = writingLanguage().toLowerCase().startsWith('de');
-  if (e.key === '-' && prevChars(1) === '-') {
+  const script = body.classList.contains('script-body');
+  if (!script && e.key === '-' && prevChars(1) === '-') {
     e.preventDefault();
     replaceBefore(1, german ? '–' : '—');
     return;
   }
-  if (german && e.key === '-' && prevChars(1) === '–') {
+  if (!script && german && e.key === '-' && prevChars(1) === '–') {
     e.preventDefault();
     replaceBefore(1, '—');
     return;
   }
-  if (e.key === '.' && prevChars(2) === '..') {
+  if (!script && e.key === '.' && prevChars(2) === '..') {
     e.preventDefault();
     replaceBefore(2, '…'); // …
     return;
@@ -10419,6 +10425,7 @@ function moveSection(fromCh, segIdx, to) {
   if (target === seg) return;
   if (fromCh === to.ch && (to.before === segIdx + 1 || (to.before == null && segIdx === fromSegs.length - 1))) return;
   snapshotStructure('card moved');
+  const settle = holdDay();
   liftSegment(fromBody, seg);
   setSegmentDown(toBody, seg.ps, seg.brk, target);
   if (seg.id && fromCh !== to.ch) {
@@ -10442,6 +10449,7 @@ function moveSection(fromCh, segIdx, to) {
   repointStickies(seg.ps, to.ch);
   scheduleMetaSave();
   updateCounters();
+  settle();
 }
 
 function moveChapterCard(chId, index) {
@@ -10462,6 +10470,7 @@ function sectionToChapter(chId, segIdx) {
   const seg = chapterSegments(chId)[segIdx];
   if (!body || !seg) return;
   snapshotStructure('card to chapter');
+  const settle = holdDay();
   liftSegment(body, seg);
   syncChapter(body, chId);
   const note = seg.id ? sectionNote(chId, seg.id) : null;
@@ -10484,6 +10493,7 @@ function sectionToChapter(chId, segIdx) {
   renderChapters();
   renderStickies();
   updateCounters();
+  settle();
   if (currentTab === 'outline') renderOutline();
 }
 
@@ -12130,6 +12140,26 @@ function wordsFromDisk() {
   if (daySeen && daySeen.bookId === book.id && sprint && sprint.bookId === book.id) sprint.startCount += total - daySeen.total;
   daySeen = { bookId: book.id, total };
 }
+// Words moved from one chapter to another (a chapter split in two, a card
+// dropped on another chapter) are neither written nor cut. They leave one
+// chapter a moment before they reach the other, and today never goes below
+// zero, so counted as they happen they would come back as new writing (#471).
+// Call this before the move; the function it returns, once the words have
+// settled, puts the day back as it was.
+function holdDay() {
+  const today = todayStr();
+  const day = book.dailyCounts && book.dailyCounts[today] ? { ...book.dailyCounts[today] } : null;
+  const total = bookWordCount();
+  const run = sprint && sprint.bookId === book.id ? { sprint, start: sprint.startCount } : null; // a sprint's count dips the same way
+  return () => {
+    if (!book || bookWordCount() !== total) return; // words really were written or cut
+    book.dailyCounts = book.dailyCounts || {};
+    book.dailyCounts[today] = day || { start: total, end: total };
+    daySeen = { bookId: book.id, total };
+    if (run && sprint === run.sprint) sprint.startCount = run.start;
+    updateCounters();
+  };
+}
 function trackDailyWords(total) {
   book.dailyCounts = book.dailyCounts || {};
   const today = todayStr();
@@ -12467,6 +12497,30 @@ function snapsToThin(snaps, now) {
   const newest = snaps.reduce((a, s) => (!a || s.at > a.at ? s : a), null);
   return snaps.filter((s) => s !== newest && s.kind !== SNAP_KEPT && now - s.at > SNAP_KEEP_DAYS * 86400000).map((s) => s.name);
 }
+// Hands each thinned snapshot's chapters on to the next one, then removes it.
+// A chapter the next snapshot lacks is read from the old one (a read that
+// fails throws; an empty chapter is '' and goes on as ''), written, and read
+// back to match before anything is removed. A next snapshot that already has
+// a chapter keeps its own version, which is what readers see from there on.
+// Any failure stops the pass with the source still in place, so the next
+// snapshot tries again.
+async function thinSnapshots(neo, bookId, snaps, now) {
+  for (const gone of snapsToThin(snaps, now)) {
+    const i = snaps.findIndex((s) => s.name === gone);
+    const next = snaps[i + 1];
+    if (i < 0 || !next) continue;
+    for (const f of snaps[i].files) {
+      if (!f.endsWith('.html') || next.files.has(f)) continue;
+      const text = await neo.snapshotRead(bookId, snaps[i].name, f);
+      if ((await neo.snapshotWrite(bookId, next.name, f, text)) === false) { next.files.add(f); continue; } // already there: its own
+      const copy = await neo.snapshotRead(bookId, next.name, f);
+      if (copy !== text) throw new Error(`snapshot thinning: ${f} did not copy to ${next.name} intact`);
+      next.files.add(f);
+    }
+    await neo.snapshotRemove(bookId, gone);
+    snaps.splice(i, 1);
+  }
+}
 // where a chapter's text at snapshots[i] is: the newest snapshot at or
 // before it holding the file (snapshots oldest first, each with `files`)
 function snapHolder(snaps, i, chId) {
@@ -12597,19 +12651,12 @@ async function takeSnapshotNow(kind, htmlOf, { ifNoneToday }) {
   snap.files = new Set([...changed.map((c) => c + '.html'), 'snapshot.json']);
   snap.meta = meta;
   snaps.push(snap);
-  // NEO's own old ones go, each handing its chapters on to the next first
-  for (const gone of snapsToThin(snaps, now)) {
-    const i = snaps.findIndex((s) => s.name === gone);
-    const next = snaps[i + 1];
-    if (i < 0 || !next) continue;
-    for (const f of snaps[i].files) {
-      if (!f.endsWith('.html') || next.files.has(f)) continue;
-      const text = await window.neo.snapshotRead(bookId, snaps[i].name, f);
-      await window.neo.snapshotWrite(bookId, next.name, f, text);
-      next.files.add(f);
-    }
-    await window.neo.snapshotRemove(bookId, gone);
-    snaps.splice(i, 1);
+  // NEO's own old ones go, each handing its chapters on to the next first. A
+  // failure leaves them where they are; the next snapshot tries again.
+  try {
+    await thinSnapshots(window.neo, bookId, snaps, now);
+  } catch (err) {
+    logSnap(err);
   }
   renderSnapList();
   return { snap, same: false };
@@ -14739,6 +14786,38 @@ document.addEventListener('keydown', (e) => {
 }, true);
 document.addEventListener('mousedown', () => { typewriterByKeyboard = false; }, true);
 
+// ---- typewriter rules: where the page goes as the writer types ----
+// The writing height is 45% of the window, with a band of about three lines
+// around it. The page's new scrollTop for a caret at caretTop, or null while
+// the caret is inside the band.
+function typewriterScrollTarget(scrollTop, caretTop, windowHeight, lineHeight) {
+  const diff = caretTop - windowHeight * 0.45;
+  return Math.abs(diff) <= lineHeight * 1.5 ? null : scrollTop + diff;
+}
+// A letter typed, Chromium scrolls its caret into view on its own. In the
+// Pages view it measures a line that a page break carried to the next page
+// at the top of its paragraph, back on the page before, and scrolls up to
+// that while the caret sits in plain view; the typewriter then glided the
+// page back, and every letter at the top of a page bobbed it (#453). NEO
+// keeps the caret in sight itself, so a scroll like that goes back. Given
+// the scrollTop when the letter went in (was) and now, where the typewriter
+// is gliding (glide, or null), the caret's top and bottom in the window as
+// they were at `was`, and the scroller's top and bottom: the scrollTop to
+// put back, or null to leave it.
+function strayCaretScroll({ was, now, glide, caretTop, caretBottom, viewTop, viewBottom }) {
+  if (now === was) return null;
+  // the typewriter's own glide, on its way
+  if (glide !== null && Math.sign(now - was) === Math.sign(glide - was) && Math.abs(now - was) <= Math.abs(glide - was) + 1) return null;
+  // a caret that was out of sight, even in part, is Chromium's to bring in
+  if (caretTop < viewTop || caretBottom > viewBottom) return null;
+  return was;
+}
+// ---- end of typewriter rules ----
+
+// where the typewriter is gliding the page, until it gets there
+let typewriterGlide = null;
+$('#paper-scroll').addEventListener('scrollend', () => { typewriterGlide = null; });
+
 document.addEventListener('selectionchange', () => {
   if (!typewriterEnabled || !book || currentTab !== 'manuscript' || !typewriterByKeyboard) return;
   const sel = window.getSelection();
@@ -14751,12 +14830,35 @@ document.addEventListener('selectionchange', () => {
       let rect = sel.getRangeAt(0).getBoundingClientRect();
       if (!rect || (rect.top === 0 && rect.height === 0)) rect = el.getBoundingClientRect();
       const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 30;
-      const diff = rect.top - window.innerHeight * 0.45;
-      // a band of about three lines around the writing height
-      if (Math.abs(diff) <= lineHeight * 1.5) return;
       const scroller = $('#paper-scroll');
-      scroller.scrollTo({ top: scroller.scrollTop + diff, behavior: scrollBehavior() });
+      const top = typewriterScrollTarget(scroller.scrollTop, rect.top, window.innerHeight, lineHeight);
+      if (top === null) return;
+      typewriterGlide = top;
+      scroller.scrollTo({ top, behavior: scrollBehavior() });
     } catch { /* selection mid-mutation; skip this frame */ }
+  });
+});
+
+// Chromium's scroll comes after the input event, inside the same keystroke,
+// so the page is checked in the next frame, before it is painted. (On the
+// window, so NEO's own input handlers, revealCaret among them, have run.)
+window.addEventListener('input', (e) => {
+  if (!pagesOn() || currentTab !== 'manuscript') return;
+  if (!e.target.closest || !e.target.closest('.chapter-body')) return;
+  const sc = $('#paper-scroll');
+  const was = sc.scrollTop;
+  requestAnimationFrame(() => {
+    const now = sc.scrollTop;
+    if (now === was) return;
+    const rect = caretRect();
+    if (!rect) return;
+    const box = sc.getBoundingClientRect();
+    const back = strayCaretScroll({
+      was, now, glide: typewriterGlide,
+      caretTop: rect.top + now - was, caretBottom: rect.bottom + now - was,
+      viewTop: box.top, viewBottom: box.bottom
+    });
+    if (back !== null) sc.scrollTop = back;
   });
 });
 
@@ -14796,7 +14898,6 @@ let viewStateSent = '';
 // the writer turns it down). The shelf goes with writing.
 const brightAside = () => !!book && !$('#editor-view').hidden && currentTab !== 'manuscript';
 function brightNow() {
-  if (!moreOn()) return brightAside() || SYSTEM_CONTRAST.matches; // the defaults
   if (brightAside()) return library.uiBrightAside === undefined ? true : !!library.uiBrightAside;
   return library.uiBright === undefined ? SYSTEM_CONTRAST.matches : !!library.uiBright;
 }
@@ -17672,14 +17773,14 @@ p.attr { font-style: normal; font-size: 0.85em; letter-spacing: 0.05em; margin-t
 .part .pl { display: block; }
 .part .pt { display: block; margin-top: 0.8em; font-size: 1.6em; letter-spacing: 0; text-transform: none; }
 .opener h1 { margin: 0; font-size: 1.8em; letter-spacing: 0.02em; text-transform: none; }
-.opener .sub { text-indent: 0; margin-top: 0.6em; font-style: italic; }
+.opener .sub { text-align: center; text-indent: 0; margin-top: 0.6em; font-style: italic; }
 .opener .byline { margin: 3em 0 0; }
 nav#toc ol { list-style: none; padding-left: 0; }
 nav#toc ol ol { padding-left: 1.5em; }
 .titlepage { text-align: center; margin-top: 30%; }
 .titlepage h2 { font-size: 2em; margin: 0; }
-.titlepage .sub { font-style: italic; }
-.titlepage .auth { margin-top: 4em; letter-spacing: 0.3em; text-transform: uppercase; }
+.titlepage .sub { text-align: center; text-indent: 0; font-style: italic; }
+.titlepage .auth { text-align: center; text-indent: 0; margin-top: 4em; letter-spacing: 0.3em; text-transform: uppercase; }
 .coverimg { text-align: center; margin: 0; padding: 0; }
 .coverimg img { max-width: 100%; max-height: 100%; }` },
     { path: 'OEBPS/cover.xhtml', content: `<?xml version="1.0" encoding="utf-8"?>
@@ -18650,7 +18751,6 @@ function usesMoreFeatures(lib) {
     (!!lib.pageWidth && lib.pageWidth !== 'regular') ||
     (lib.uiZoom !== undefined && snapZoom(lib.uiZoom) !== 1) ||
     (!!lib.focus && lib.focus !== 'off') ||
-    lib.uiBright !== undefined || lib.uiBrightAside === false ||
     !!lib.markdownOff || !!lib.exportCustomChapterTitles ||
     (!!lib.spellLanguage && lang(lib.spellLanguage) !== lang(NeoI18n.getLocale()));
 }

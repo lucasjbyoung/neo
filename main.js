@@ -201,18 +201,30 @@ async function chooseLibraryFolder() {
 // ransomware protection) refuses new files in Documents to apps it doesn't
 // know, and NEO is one. A small file written and removed tells.
 let lastFolderError = null;
+// A folder in Dropbox or one an antivirus watches can hold a file for a
+// moment as it is made: the test file is tried again a few times, and once
+// it was written, failing to delete it is no reason to say the folder can't
+// be saved in (#474).
+const PROBE_TRIES = 3;
+const PROBE_RETRY = ['EBUSY', 'EPERM', 'EACCES', 'EAGAIN'];
 function folderWritable(dir) {
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    const probe = path.join(dir, '.neo-write-test');
-    fs.writeFileSync(probe, 'ok');
-    fs.unlinkSync(probe);
-    lastFolderError = null;
-    return true;
-  } catch (err) {
-    lastFolderError = err;
-    logError('library folder not writable: ' + dir, err);
-    return false;
+  const probe = path.join(dir, '.neo-write-test');
+  for (let n = 1; ; n++) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(probe, 'ok');
+      try { fs.unlinkSync(probe); } catch { /* it is only a test file: the next one writes over it */ }
+      lastFolderError = null;
+      return true;
+    } catch (err) {
+      if (n < PROBE_TRIES && PROBE_RETRY.includes(err.code)) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150 * n);
+        continue;
+      }
+      lastFolderError = err;
+      logError('library folder not writable: ' + dir, err);
+      return false;
+    }
   }
 }
 const isBlockedWrite = (err) => !!err && ['EPERM', 'EACCES', 'EROFS'].includes(err.code);
@@ -900,11 +912,13 @@ ipcMain.handle('snapshot:list', (_e, bookId) => {
   }
   return out;
 });
+// A file that can't be read throws (missing, no permission, still in iCloud):
+// only a chapter that is really empty reads as ''. Thinning relies on telling
+// them apart, so it never carries an empty stand-in forward.
 ipcMain.handle('snapshot:read', (_e, bookId, name, file) => {
-  let fp;
-  try { fp = snapshotFile(bookId, name, file); } catch { return ''; }
-  const read = () => { try { return fs.readFileSync(fp, 'utf8'); } catch { return ''; } };
-  return afterLocal([fp], read, () => '');
+  const fp = snapshotFile(bookId, name, file);
+  const read = () => fs.readFileSync(fp, 'utf8');
+  return afterLocal([fp], read, () => { throw cloudError(fp); });
 });
 ipcMain.handle('snapshot:write', (_e, bookId, name, file, text) => {
   const target = snapshotFile(bookId, name, file);
@@ -3002,7 +3016,6 @@ function buildMenu() {
           ]
         },
         {
-          more: true,
           label: t('Brighter Interface'),
           type: 'checkbox',
           checked: viewState.uiBright,
@@ -3249,7 +3262,9 @@ let updaterReady = false;    // an update is downloaded and waiting
 // where the background download stands, so the window can pick it up mid-way
 const upd = { state: 'idle', version: '', percent: 0, transferred: 0, total: 0, message: '' };
 function getUpdater() {
-  if (updater || !app.isPackaged) return updater;
+  // (electron-builder's portable launcher sets PORTABLE_EXECUTABLE_FILE: there
+  // the updater would install the setup program on quit, #479)
+  if (updater || !app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) return updater;
   const { autoUpdater } = require('electron-updater');
   autoUpdater.logger = null;
   autoUpdater.autoDownload = true;       // found it? fetch it — nobody should have to ask

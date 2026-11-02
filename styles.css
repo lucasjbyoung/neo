@@ -936,6 +936,9 @@ body.bright .spell-menu button { color: #eee; }
   background: #f6e3b8; border-bottom: 2px solid var(--red);
   padding: 0 3px; border-radius: 2px; cursor: pointer;
 }
+/* the night page's ink is light, and the flag took it: white on the yellow.
+   It keeps the dark ink the gold buttons use instead (#454) */
+body.night .ph-mark { color: #191919; }
 
 /* --- The pages a book carries, in the manuscript, set as they'll print --- */
 .chapter.bookpage { display: flex; flex-direction: column; }
@@ -2229,9 +2232,10 @@ body.light .snap-ch:hover { color: #1c1a17; }
 .snap-chapter.same .snap-tag { color: color-mix(in srgb, var(--ink) 45%, var(--paper)); }
 .snap-chapter.same .snap-body { opacity: 0.55; }
 .snap-body { user-select: text; cursor: text; }
-.snap-body p.snap-gone { background: rgba(192, 57, 43, 0.14); box-shadow: -6px 0 0 rgba(192, 57, 43, 0.14), 6px 0 0 rgba(192, 57, 43, 0.14); }
-::highlight(neo-snap-gone) { background-color: rgba(192, 57, 43, 0.24); }
-
+.snap-body p.snap-gone { background: rgba(192, 57, 43, 0.14); box-shadow: -6px 0 0 rgba(192, 57, 43, 0.14), 6px 0 0 rgba(192, 57, 43, 0.14); text-decoration: underline 2px #c0392b; text-decoration-skip-ink: none; }
+::highlight(neo-snap-gone) { background-color: rgba(192, 57, 43, 0.24); text-decoration: underline 2px #c0392b; text-decoration-skip-ink: none; }
+body.night .snap-body p.snap-gone { background: rgba(224, 112, 95, 0.3); box-shadow: -6px 0 0 rgba(224, 112, 95, 0.3), 6px 0 0 rgba(224, 112, 95, 0.3); text-decoration-color: #e0705f; }
+body.night ::highlight(neo-snap-gone) { background-color: rgba(224, 112, 95, 0.4); text-decoration-color: #e0705f; }
 /* the Outline's cards for where the caret is, atop the right-hand pane (#340) */
 #side-cards { display: flex; flex-direction: column; gap: 10px; padding: 0 12px; }
 #side-cards:not(:empty) { margin-bottom: 22px; }
@@ -2297,7 +2301,9 @@ body.light .side-card textarea::placeholder { color: #a39d90; }
 }
 #notes-up:hover, #notes-up:focus-visible { color: var(--accent); }
 #editor-view:not(.notes-tab) #notes-up, #editor-view:not(.notes-tab) #notes-outline { display: none; }
-#aux-paper.notes-chapter #aux-title { margin-bottom: 18px; }
+/* only on the Notes tab: the class stays on the page after it, and the
+   Outline's List/Cards switch is set 30px up into the heading's 40px (#455) */
+#editor-view.notes-tab #aux-paper.notes-chapter #aux-title { margin-bottom: 18px; }
 #notes-outline {
   max-width: 34em; margin: 0 auto 40px; text-align: center; color: #8a8a8a;
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
