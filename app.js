@@ -762,6 +762,15 @@ async function loadLibrary() {
 function showFirstRun() {
   const fr = $('#firstrun');
   fr.hidden = false;
+  // a Mac where NEO Pocket already keeps books in iCloud Drive: open those
+  // instead of starting a new library (NEO restarts in that folder)
+  if (window.neo.pocketLibrary) {
+    window.neo.pocketLibrary().then((p) => {
+      if (!p || !p.offer) return;
+      $('#fr-pocket').hidden = false;
+      $('#fr-pocket-btn').onclick = () => { window.neo.usePocketLibrary(); };
+    }).catch(() => {});
+  }
   let picked = { body: Object.keys(BODY_FONTS)[0] || 'Georgia', dropcap: 'literary' };
 
   // Step 1: who are you, and how do you write?
@@ -1132,11 +1141,12 @@ async function renderShelves() {
     blank.title = t('Start a new book');
     blank.onclick = () => createBookOnShelf(shelf);
     pressable(blank, t('Start a new book'));
-    // right-click (a long press on a phone): a book or a script
+    // right-click (a long press on a phone): a book or a script — in simple
+    // NEO and on Pocket too, so a writer who looks for scripts finds them
+    // where they'd look (#494, #504)
     if (!isBound(shelf)) {
       blank.addEventListener('contextmenu', async (e) => {
         e.preventDefault();
-        if (!moreOn()) return; // scripts are behind Show More Features
         const pick = await popMenu(e.clientX, e.clientY, [
           { label: t('New Book'), value: 'book' },
           { label: t('New Script'), value: 'script' }
@@ -2679,6 +2689,18 @@ function renderChapters() {
     // a script's lines are set as they print (styles.css, SCREENPLAYS)
     if (isScript()) body.classList.add('script-body', $('#paper').classList.contains('narrow') ? 'sp-narrow' : 'sp-geom', 'no-cap');
     body.innerHTML = chapterHTML[chId] || '<p><br></p>';
+    // a script saved with its last line element deleted comes back from disk
+    // as bare text with no lines at all — Return and Tab do nothing on it and
+    // every restart keeps it that way. Wrap the stray text into one line
+    // again, as a heading when it reads like one (INT./EXT.), else as action,
+    // the way the same typing is set in a script that works
+    if (isScript() && !body.querySelector('p') && body.textContent.trim()) {
+      const line = document.createElement('p');
+      line.innerHTML = body.innerHTML;
+      body.innerHTML = '';
+      body.appendChild(line);
+      if (SP_HEAD_RE.test(line.textContent)) line.classList.add('sp-heading');
+    }
     markDialogueOpening(body);
     if (PAGE_PROMPTS[kind]) {
       body.dataset.ph = PAGE_PROMPTS[kind]();
@@ -4850,7 +4872,10 @@ function bookQuotes(el) {
     return { '»': own === '»' ? 0 : n(/»(?=[\p{L}\p{N}])/gu), '«': own === '«' ? 0 : n(/«(?=[\p{L}\p{N}])/gu), '„': own === '„' ? 0 : n(/„(?=[\p{L}\p{N}])/gu), own: n(new RegExp(own + '\\s?(?=[\\p{L}\\p{N}])', 'gu')) };
   };
   const body = el && el.closest ? el.closest('.chapter-body') : null;
-  let c = opens(body ? body.textContent : '');
+  // paragraph by paragraph: one ending in » and the next starting with a
+  // letter don't make an opening »
+  const text = !body ? '' : body.children ? [...body.children].map((p) => p.textContent).join('\n') : body.textContent;
+  let c = opens(text);
   if (!c['»'] && !c['«'] && !c['„'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
   // a German book already written in „…“ keeps its marks
   if (c['„'] > c.own && c['„'] >= c['»'] && c['„'] >= c['«'] && writingLanguage().toLowerCase().startsWith('de')) return { open: '„', close: '“' };
@@ -6035,6 +6060,16 @@ function spToFdx(lines, title = {}) {
   if (tp.length) out += '  <TitlePage>\n    <Content>\n' + tp.join('').replace(/^ {4}/gm, '      ') + '    </Content>\n  </TitlePage>\n';
   return out + '</FinalDraft>\n';
 }
+// The corner number of a script page, the first page included. The title
+// page is a sheet of its own and is not numbered here.
+function spPageLabel(page) {
+  return page + '.';
+}
+// A line carries that number when a page starts on it. The first line
+// starts page 1, which is numbered like every page after it.
+function spPageMark(index, brk) {
+  return !!(brk || index === 0);
+}
 // ---- end of screenplay rules ----
 
 const isScript = (meta = book) => !!meta && meta.format === 'screenplay';
@@ -6335,7 +6370,29 @@ function spTab(p, back, ghost) {
 // As the writer types: INT. or EXT. makes a heading, an opening "(" in a
 // speech makes a parenthetical
 function scriptInput(body) {
-  const p = caretBlock(body);
+  let p = caretBlock(body);
+  // the browser can leave the page with no lines at all (⌘A then Delete or
+  // ⌘X, or one more Backspace on the one empty line left deletes that element
+  // itself): anything typed after lands on the page as bare text, which no
+  // line key can act on, and Return does nothing. Re-cover the page — wrap
+  // what is there into one fresh line, the way a new script starts, and put
+  // the caret back at its end
+  // (bare text can come with a stray <br> or a bold run beside it: those
+  // move into the line too)
+  if (!p && !body.querySelector('p')) {
+    const fresh = document.createElement('p');
+    if (body.textContent) { while (body.firstChild) fresh.appendChild(body.firstChild); } else { body.innerHTML = ''; fresh.innerHTML = '<br>'; }
+    body.appendChild(fresh);
+    const sel = window.getSelection();
+    if (document.activeElement === body) {
+      const r = document.createRange();
+      r.selectNodeContents(fresh);
+      r.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    p = fresh;
+  }
   // the whole script cleared (⌘A, then Delete or ⌘X): the one line left
   // starts over as action, the way a new script does, not as whatever the
   // last line deleted was. Left as dialogue, "int." stayed dialogue and
@@ -6464,7 +6521,7 @@ function spRepaginate() {
   const pg = spPaginate(ps.map((p, i) => ({ type: lines[i].type, lines: counts[i], newPage: p.hasAttribute('data-newpage') })));
   ps.forEach((p, i) => {
     const a = pg.at[i];
-    const page = a.brk ? String(a.page) : null;
+    const page = spPageMark(i, a.brk) ? String(a.page) : null;
     if (p.getAttribute('data-pg') !== page) { if (page) p.setAttribute('data-pg', page); else p.removeAttribute('data-pg'); }
     const fill = a.brk ? String(Math.min(SP_LINES_PER_PAGE, a.fill)) : null;
     if (p.getAttribute('data-fill') !== fill) { if (fill) p.setAttribute('data-fill', fill); else p.removeAttribute('data-fill'); }
@@ -7053,7 +7110,7 @@ async function spPdfHtml() {
     <div class="tp-contact">${lines2(library.scriptContact || '')}</div>
     <div class="tp-draft">${lines2(book.draft || '')}</div>
   </div>`;
-  const body = pages.map((rows, k) => `<div class="page">${k ? `<div class="num">${k + 1}.</div>` : ''}<div class="room">${(rows || []).join('')}</div></div>`).join('');
+  const body = pages.map((rows, k) => `<div class="page"><div class="num">${spPageLabel(k + 1)}</div><div class="room">${(rows || []).join('')}</div></div>`).join('');
   return `<!DOCTYPE html><html lang="${escHtml(writingLanguage())}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>
 ${fonts}
 @page { size: 8.5in 11in; margin: 0; }
@@ -7858,7 +7915,12 @@ function renderContentsLists() {
       const li = document.createElement('li');
       li.className = `t-${e.type} lv${e.level}`;
       li.textContent = e.label;
-      li.onclick = () => focusChapterStart(e.chId);
+      // a line takes you to its page: the caret at its start, and the page in view
+      li.onclick = () => {
+        focusChapterStart(e.chId);
+        const sec = document.querySelector(`.chapter[data-id="${e.chId}"]`);
+        if (sec) sec.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+      };
       list.appendChild(li);
     }
   }
