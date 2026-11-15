@@ -1,7 +1,7 @@
 {
   "name": "neo",
   "productName": "NEO",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "A word processor for authors. Distraction-free by default.",
   "homepage": "https://github.com/hughhowey/neo",
   "main": "main.js",
@@ -15,6 +15,8 @@
     "test:footnotes": "electron scripts/footnotes.e2e.js",
     "test:cover-text": "electron scripts/cover-text.e2e.js",
     "test:caret": "electron scripts/caret.e2e.js",
+    "test:dropcap": "electron scripts/dropcap.e2e.js",
+    "test:twodevices": "electron scripts/twodevices.e2e.js",
     "test:emphasis": "electron scripts/emphasis.e2e.js",
     "test:manuscript": "electron scripts/manuscript.e2e.js",
     "test:pages": "electron scripts/pages.e2e.js",
@@ -23,6 +25,7 @@
     "test:mcp": "electron scripts/mcp.e2e.js",
     "test:script-keys": "electron scripts/script-keys.e2e.js",
     "test:new-script": "electron scripts/new-script.e2e.js",
+    "test:danish": "electron scripts/danish.e2e.js",
     "test": "node --test \"scripts/*.test.js\"",
     "test:coverage": "node --test --experimental-test-coverage \"scripts/*.test.js\"",
     "lint": "oxlint",
@@ -115,7 +118,9 @@
       "node_modules/dictionary-ro/**",
       "node_modules/dictionary-pt/**",
       "node_modules/dictionary-hu/**",
-      "node_modules/dictionary-sv/**"
+      "node_modules/dictionary-da/**",
+      "node_modules/dictionary-sv/**",
+      "node_modules/dictionary-uk/**"
     ],
     "extraResources": [
       {
@@ -163,6 +168,7 @@
   },
   "dependencies": {
     "@farscrl/hunspell-wasm": "1.0.1",
+    "dictionary-da": "file:dictionaries/da",
     "dictionary-de": "^3.0.0",
     "dictionary-el": "^4.0.0",
     "dictionary-en-au": "^3.0.0",
@@ -178,6 +184,7 @@
     "dictionary-ro": "3.0.0",
     "dictionary-ru": "^3.0.0",
     "dictionary-sv": "4.0.0",
+    "dictionary-uk": "file:dictionaries/uk",
     "electron-updater": "^6.3.9",
     "jszip": "^3.10.1",
     "koffi": "2.16.3"

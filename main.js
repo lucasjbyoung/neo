@@ -1063,12 +1063,35 @@ function readBookMeta(bookId) {
   return rebuildBookMeta(bookId);
 }
 
-ipcMain.handle('book:writeMeta', (_e, bookId, meta) => {
+// `known` is every chapter the window holds or has held for this book. When
+// book.json on disk lists one it has never seen, another device added a
+// chapter since this window last looked: nothing is written, and the window
+// is told, so it takes the chapter in first. (book.json is saved whole at
+// every pause in typing; written blind, it dropped the other device's new
+// chapter from the book, its words left in a file no list named.)
+ipcMain.handle('book:writeMeta', (_e, bookId, meta, known) => {
+  const file = path.join(bookDir(bookId), 'book.json');
+  if (Array.isArray(known)) {
+    const unseen = unseenChapters(file, known);
+    if (unseen.length) return { unseen };
+  }
   meta.modified = new Date().toISOString();
-  writeJSON(path.join(bookDir(bookId), 'book.json'), meta);
+  writeJSON(file, meta);
   writeCatalog();
   return meta.modified;
 });
+
+// shared with Pocket's bridge (same rule)
+function unseenChapters(file, known) {
+  let disk = null;
+  try {
+    if (isCloudOnly(file)) return [];
+    disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch { return []; } // no book.json yet, or one that can't be read: nothing to compare
+  if (!disk || !Array.isArray(disk.chapterOrder)) return [];
+  const seen = new Set(known);
+  return disk.chapterOrder.filter((c) => typeof c === 'string' && !seen.has(c));
+}
 
 // {chapterId: mtime and size} for a book's chapter files — how refreshFromDisk
 // tells what changed without re-reading every chapter. The size is there
@@ -1098,8 +1121,8 @@ ipcMain.handle('chapter:read', (_e, bookId, chapterId) => {
 });
 
 // `expected` is the text the window last read or wrote for this chapter.
-// When the file holds something else (another device wrote it since, and
-// it isn't just an older copy of these words), nothing is written: the
+// When the file holds something else (another device wrote it since, even
+// if only formatting, order or a deletion changed), nothing is written: the
 // window is handed that text to keep as its own chapter first, so neither
 // version is lost to a save that happened before the next look at the disk.
 ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
@@ -1117,20 +1140,15 @@ ipcMain.handle('chapter:write', (_e, bookId, chapterId, html, expected) => {
   writeFileDurable(file, html);
   return true;
 });
-// shared with Pocket's bridge (same rule): the disk copy differs from what
-// this device last knew, holds words, and has a word the new text lacks
+// shared with Pocket's bridge (same rule): the disk copy is not exactly what
+// this device last knew (`expected`) and is not already the new text (a
+// retry or an identical write), and it holds words. Any other revision,
+// formatting, order and deletions included, is a conflict: the disk text
+// is handed back to be kept as a twin before anything is replaced.
 function chapterDiverged(cur, expected, html) {
   if (cur === expected || cur === html) return false;
-  const bag = (h) => {
-    const m = new Map();
-    for (const w of String(h || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').split(/\s+/)) if (w) m.set(w, (m.get(w) || 0) + 1);
-    return m;
-  };
-  const there = bag(cur);
-  if (!there.size) return false;
-  const here = bag(html);
-  for (const [w, n] of there) if (n > (here.get(w) || 0)) return true;
-  return false;
+  const words = String(cur || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+  return words !== '';
 }
 
 ipcMain.handle('chapter:delete', (_e, bookId, chapterId) => {
@@ -2182,6 +2200,7 @@ const CHAPTER_WORDS = new RegExp('^(' + [
   // on its own it is an English word, and "Capitol Hill was quiet." is prose
   'capitol(?=\\s+\\d)', 'capitolul', 'partea',
   'глава', 'пролог', 'эпилог', 'часть',                            // ru
+  'розділ', 'епілог', 'частина',                                   // uk (глава, пролог above)
   'κεφάλαιο', 'κεφαλαιο', 'πρόλογος', 'προλογος',
   'επίλογος', 'επιλογος', 'μέρος', 'μερος',
   'ραψωδία', 'ραψωδια',                                             // el
@@ -2572,6 +2591,15 @@ function createWindow() {
   // a trial says so in the window bar
   if (TRY_DIR) win.on('page-title-updated', (e, title) => { e.preventDefault(); win.setTitle(title + ' (trial copy)'); });
   win.loadFile('index.html');
+  // NEO's window only ever shows NEO. A chapter's file can hold a link (one
+  // that came in a book folder from someone else, say), and clicked where the
+  // page is read-only, in History, it took the whole window to that address,
+  // which then held every key to the library this window has. Nothing
+  // navigates this window away, and nothing opens a second one from it.
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url !== win.webContents.getURL()) e.preventDefault();
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // The menu bar follows the real full-screen state, whoever changed it.
   // Electron only puts the bar back after a full screen it entered itself,
   // so once a window manager's own full-screen key had been used (Sway, i3),
@@ -2653,7 +2681,9 @@ const SPELL_LANGUAGES = {
   'ro': { label: 'Română', pkg: 'dictionary-ro' },
   'hu': { label: 'Magyar', pkg: 'dictionary-hu' },
   'ru': { label: 'Русский', pkg: 'dictionary-ru' },
+  'uk': { label: 'Українська', pkg: 'dictionary-uk' },
   'sv': { label: 'Svenska', pkg: 'dictionary-sv' },
+  'da': { label: 'Dansk', pkg: 'dictionary-da' },
   'el': { label: 'Ελληνικά', pkg: 'dictionary-el' }
 };
 

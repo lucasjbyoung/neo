@@ -58,6 +58,117 @@ test('Swedish: accents, inflections, compounds, suggestions and dictionary chang
   assert.equal((await send({ type: 'check', words: ['författare'] })).result.författare, true);
 });
 
+test('Danish: the pinned LibreOffice dictionary, æ ø å, inflections, compounds and suggestions', async () => {
+  const dir = path.join(root, 'node_modules/dictionary-da');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'))).version, '2.9.101');
+  // the files are LibreOffice's, unchanged: their SHA-256 is the one NOTICE.txt gives
+  const notice = fs.readFileSync(path.join(dir, 'NOTICE.txt'), 'utf8');
+  for (const f of ['index.aff', 'index.dic']) {
+    const sum = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(dir, f))).digest('hex');
+    assert.ok(notice.includes(`${sum}  ${f}`), f);
+  }
+  assert.match(fs.readFileSync(path.join(dir, 'index.aff'), 'utf8'), /^SET UTF-8$/m);
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'da', dir })).ok, true);
+  const good = await send({ type: 'check', words: [
+    'i', 'går', 'jeg', 'hun', 'bog', 'bogen', 'bøger', 'bøgerne', 'huset', 'husene', 'skrive', 'skrev', 'skrevet',
+    'æble', 'æbler', 'Æble', 'øje', 'øjne', 'år', 'årene', 'blåbær', 'kærlighed', 'forfatter', 'forfatterens',
+    'børnebog', 'børnebøger', 'skrivebord', 'sygeplejerske', 'fodboldspiller', 'sommerferie', 'København', 'Øresund', 'Århus', 'Aarhus', 'I'
+  ] });
+  for (const [word, ok] of Object.entries(good.result)) assert.equal(ok, true, word);
+  const bad = await send({ type: 'check', words: ['forfater', 'kærlihed', 'aeble', 'oejne', 'sygeplejeske', 'fodbolspiller', 'gaaet', 'hjemmme'] });
+  for (const [word, ok] of Object.entries(bad.result)) assert.equal(ok, false, word);
+  for (const [typo, fix] of [['forfater', 'forfatter'], ['kærlihed', 'kærlighed'], ['aeble', 'æble'], ['oejne', 'øjne'], ['gaaet', 'gået'], ['fodbolspiller', 'fodboldspiller']]) {
+    assert.ok((await send({ type: 'suggest', word: typo })).result.includes(fix), typo);
+  }
+  // a word learned with æ ø å is known straight away
+  assert.equal((await send({ type: 'check', words: ['Sølvgråbjørn'] })).result.Sølvgråbjørn, false);
+  await send({ type: 'add', word: 'Sølvgråbjørn' });
+  assert.equal((await send({ type: 'check', words: ['Sølvgråbjørn'] })).result.Sølvgråbjørn, true);
+  // and back and forth with English
+  assert.equal((await send({ type: 'load', language: 'en-US', dir: path.join(root, 'node_modules/dictionary-en-us') })).ok, true);
+  assert.equal((await send({ type: 'check', words: ['blåbær'] })).result.blåbær, false);
+  assert.equal((await send({ type: 'load', language: 'da', dir })).ok, true);
+  assert.equal((await send({ type: 'check', words: ['blåbær'] })).result.blåbær, true);
+});
+
+test('Danish ships with its license on desktop and in Pocket', () => {
+  const pkg = JSON.parse(source('package.json'));
+  assert.equal(pkg.dependencies['dictionary-da'], 'file:dictionaries/da');
+  assert.ok(pkg.build.asarUnpack.includes('node_modules/dictionary-da/**'));
+  const da = JSON.parse(source('dictionaries/da/package.json'));
+  assert.equal(da.license, '(GPL-2.0-only OR LGPL-2.1-only OR MPL-1.1)');
+  for (const f of da.files) assert.ok(fs.existsSync(path.join(root, 'dictionaries/da', f)), f);
+  for (const f of ['index.aff', 'index.dic', 'NOTICE.txt', 'MPL-1.1.txt', 'README_da_DK.txt']) assert.ok(da.files.includes(f), f);
+  assert.match(source('dictionaries/da/MPL-1.1.txt'), /MOZILLA PUBLIC LICENSE\s+Version 1\.1/);
+  assert.match(source('dictionaries/da/README_da_DK.txt'), /Mozilla MPL version 1\.1/);
+  // Pocket: the list desktop offers, with the notice copied beside the data
+  assert.match(source('main.js'), /'da': \{ label: 'Dansk', pkg: 'dictionary-da' \}/);
+  const pocket = source('scripts/pocket-www.js');
+  assert.match(pocket, /path\.join\(root, 'dictionaries', code\)/);
+  assert.match(pocket, /meta\.files/);
+});
+
+test('Ukrainian: every apostrophe, ґ, hyphenated words and suggestions', async () => {
+  const send = spellWorker();
+  const dir = path.join(root, 'node_modules/dictionary-uk');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'))).license, 'MPL-1.1');
+  assert.equal((await send({ type: 'load', language: 'uk', dir })).ok, true);
+  const good = await send({ type: 'check', words: ["м'ясо", 'м’ясо', 'мʼясо', 'ґанок', 'будь-який'] });
+  for (const [word, ok] of Object.entries(good.result)) assert.equal(ok, true, word);
+  assert.equal((await send({ type: 'check', words: ['ластывка'] })).result.ластывка, false);
+  assert.ok((await send({ type: 'suggest', word: 'ластывка' })).result.includes('ластівка'));
+});
+
+test('a Ukrainian suggestion goes onto the page with a typographic apostrophe', async () => {
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'uk', dir: path.join(root, 'node_modules/dictionary-uk') })).ok, true);
+  const node = { data: 'Свіже мясо, а не ластывка.', nodeType: 3, isConnected: true };
+  const editor = { node, id: '', dataset: {}, closest: (selector) => selector === '.chapter' ? { dataset: { id: 'ch-test' } } : editor };
+  class TextRange {
+    setStart(n, offset) { this.node = n; this.start = offset; }
+    setEnd(_n, offset) { this.end = offset; }
+    toString() { return this.node.data.slice(this.start, this.end); }
+  }
+  let contextmenu, menu, selected, at;
+  const highlights = new Map();
+  const context = vm.createContext({
+    document: {
+      addEventListener: (name, callback) => { if (name === 'contextmenu') contextmenu = callback; },
+      createTreeWalker: () => { let n = node; return { nextNode: () => { const x = n; n = null; return x; } }; },
+      querySelector: () => editor,
+      createRange: () => new TextRange(),
+      caretRangeFromPoint: () => ({ startContainer: node, startOffset: at }),
+      execCommand: (_cmd, _ui, text) => { node.data = node.data.slice(0, selected.start) + text + node.data.slice(selected.end); }
+    },
+    Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange, Highlight: Set, CSS: { highlights },
+    $: () => null, t: (text) => text, tk: (text) => text, toast() {},
+    captureMenu: (_x, _y, word, suggestions, actions) => { menu = { word, suggestions, actions }; },
+    window: {
+      getSelection: () => ({ removeAllRanges() {}, addRange: (r) => { selected = r; } }),
+      neo: {
+        spellCheckWords: async (words) => (await send({ type: 'check', words })).result,
+        spellSuggest: async (word) => (await send({ type: 'suggest', word })).result
+      }
+    }
+  });
+  const app = source('app.js');
+  vm.runInContext(app.slice(app.indexOf('let spellOn = false;'), app.indexOf('let typewriterEnabled = false;')), context);
+  context.el = editor;
+  await vm.runInContext('spellOn = true; showSpellMenu = captureMenu; spellScanEl(el, "ch-test")', context);
+  assert.deepEqual([...highlights.get('neo-spell')].map((r) => r.toString()), ['мясо', 'ластывка']);
+  at = node.data.indexOf('мясо') + 1;
+  await contextmenu({ target: editor, clientX: 0, clientY: 0, preventDefault() {} });
+  assert.ok(menu.suggestions.includes("м'ясо"));
+  menu.actions.replace("м'ясо");
+  assert.equal(node.data, 'Свіже м’ясо, а не ластывка.');
+  at = node.data.indexOf('ластывка') + 1;
+  await contextmenu({ target: editor, clientX: 0, clientY: 0, preventDefault() {} });
+  assert.ok(menu.suggestions.includes('ластівка'));
+  menu.actions.replace('ластівка');
+  assert.equal(node.data, 'Свіже м’ясо, а не ластівка.');
+});
+
 function spellWorker() {
   let handle, reply;
   const context = vm.createContext({
@@ -194,6 +305,48 @@ test('learning a Romanian word removes cached Unicode-variant underlines across 
   assert.deepEqual(flagged(), ['frgament']);
 });
 
+test('a book opened again is checked again: new pages, the same chapter ids', async () => {
+  const send = spellWorker();
+  assert.equal((await send({ type: 'load', language: 'en-US', dir: path.join(root, 'node_modules/dictionary-en-us') })).ok, true);
+  const pageWith = (text) => ({ node: { data: text, nodeType: 3, isConnected: true } });
+  let page = pageWith('a frgament');
+  class TextRange {
+    setStart(node, offset) { this.node = node; this.start = offset; }
+    setEnd(_node, offset) { this.end = offset; }
+    toString() { return this.node.data.slice(this.start, this.end); }
+  }
+  const highlights = new Map();
+  const context = vm.createContext({
+    document: {
+      addEventListener() {},
+      createTreeWalker: (el) => {
+        let node = el.node;
+        return { nextNode: () => { const next = node; node = null; return next; } };
+      },
+      querySelector: (selector) => selector.startsWith('.chapter[') ? page : null
+    },
+    Node: { TEXT_NODE: 3 }, NodeFilter: { SHOW_TEXT: 4 }, Range: TextRange,
+    Highlight: Set, CSS: { highlights }, t: (text) => text, toast() {},
+    currentTab: 'manuscript', currentChapterId: 'ch-test', library: {},
+    window: { neo: { spellCheckWords: async (words) => (await send({ type: 'check', words })).result } }
+  });
+  const app = source('app.js');
+  vm.runInContext(app.slice(app.indexOf('let spellOn = false;'), app.indexOf('let typewriterEnabled = false;')), context);
+  vm.runInContext('spellOn = true;', context);
+  await vm.runInContext('spellScanEl(spellElFor("ch-test"), "ch-test")', context);
+  const flagged = () => [...highlights.get('neo-spell')].map((range) => [range.node, range.toString()]);
+  assert.deepEqual(flagged(), [[page.node, 'frgament']]);
+  // back to the shelf and open the book again: the chapter is a new page
+  page.node.isConnected = false;
+  page = pageWith('another frgament');
+  vm.runInContext('forgetSpelling(); scanSpellingHere();', context);
+  await new Promise(setImmediate);
+  assert.deepEqual(flagged(), [[page.node, 'frgament']]);
+  // openBook is where it happens
+  const open = app.slice(app.indexOf('async function openBook('));
+  assert.match(open.slice(0, open.indexOf('\n}\n')), /forgetSpelling\(\)/);
+});
+
 // Run the real main-process startup functions against a temporary library.
 // Only Electron's window/worker APIs are replaced; settings and library IO
 // use the same code and files as the app.
@@ -261,7 +414,7 @@ test('spellcheck follows the interface until a dictionary is picked; nothing is 
   }
 
   // a dictionary picked in Edit → Spellcheck Language wins, whatever the interface
-  for (const code of ['en-US', 'en-GB', 'fr', 'ro', 'sv']) {
+  for (const code of ['en-US', 'en-GB', 'fr', 'ro', 'sv', 'da']) {
     const explicit = mainContext(temp, 'ro-RO', {}, { spellLanguage: code });
     assert.equal(explicit.loads[0].language, code);
     assert.equal(explicit.read().spellLanguage, code);
@@ -269,6 +422,16 @@ test('spellcheck follows the interface until a dictionary is picked; nothing is 
     assert.equal(explicit.loads.length, 1);
     await Promise.resolve();
   }
+
+  // Danish spellcheck with an English interface: nothing else changes with it
+  const danish = mainContext(temp, 'en-US', {}, { spellLanguage: 'da' });
+  assert.equal(danish.loads[0].language, 'da');
+  assert.match(danish.loads[0].dir, /dictionary-da$/);
+  vm.runInContext('setUiLanguage("en")', danish.context);
+  assert.equal(vm.runInContext('spellLanguage', danish.context), 'da');
+  assert.equal(danish.read().spellLanguage, 'da');
+  assert.equal(await danish.handlers.get('spell:setLanguage')(null, 'da'), true);
+  await Promise.resolve();
 
   // a library.json that doesn't parse is never touched
   const broken = '{"shelves": [{"id": "shelf-1", "name": "Mine"';

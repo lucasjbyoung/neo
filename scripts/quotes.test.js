@@ -65,6 +65,7 @@ const styles = [
   ['it', '', `"Disse “ciao”"`, '«Disse “ciao”»'],
   ['pt-PT', '', `"Ele disse “olá”"`, '«Ele disse “olá”»'],
   ['ru', '', `"Он сказал „привет“"`, '«Он сказал „привет“»'],
+  ['uk', '', `"Він сказав „м'ясо“"`, '«Він сказав „м’ясо“»'],
   ['el', '', `"Είπε ‹γεια›"`, '«Είπε ‹γεια›»'],
   // „…” languages, «…» or »…« inside, typed by hand
   ['pl', '', `"Powiedział «cześć»"`, '„Powiedział «cześć»”'],
@@ -72,7 +73,12 @@ const styles = [
   ['hu', '', `"Azt mondta »szia«"`, '„Azt mondta »szia«”'],
   // Swedish ”…”, and a Swedish book in »…»
   ['sv', '', `"Han sa 'hej'"`, '”Han sa ’hej’”'],
-  ['sv', '»Ja» sa hon.', `"Han sa ›hej›"`, '»Han sa ›hej›»']
+  ['sv', '»Ja» sa hon.', `"Han sa ›hej›"`, '»Han sa ›hej›»'],
+  // Danish »…«, ' an apostrophe; a Danish book already in „…“ keeps it
+  ['da', '', `"Hej," sagde hun.`, '»Hej,« sagde hun.'],
+  ['da', '', `"Han sagde 'hej'"`, '»Han sagde ’hej’«'],
+  ['da', '', `"Det er Peters bog," sagde hun. "Ja."`, '»Det er Peters bog,« sagde hun. »Ja.«'],
+  ['da', '„Ja“, sagde hun.', `"Nej," sagde han.`, '„Nej,“ sagde han.']
 ];
 
 describe('smart quotes: an inner quotation closing right before the outer one (#410)', () => {
