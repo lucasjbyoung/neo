@@ -44,7 +44,7 @@ function forward(line) {
       } catch { fail(id, `NEO answered ${res.statusCode}`); }
     });
   });
-  req.on('error', () => fail(id, 'NEO isn’t answering. Open NEO, with File → Show More Features on and the server on in File → MCP Server….'));
+  req.on('error', () => fail(id, 'NEO isn’t answering. Open NEO, with MCP server on in Options and the server on in File → MCP Server….'));
   req.end(JSON.stringify(msg));
 }
 

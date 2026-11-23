@@ -158,7 +158,7 @@ test('word_count: the book, a chapter, some text', async () => {
   assert.equal(all.words, await js('bookWordCount()'));
   assert.equal(all.chapters.length, 3);
   assert.equal((await call('word_count', { chapter: 'Vesuvius' })).words, 4);
-  assert.equal((await call('word_count', { text: 'One two « three » — four' })).words, 4);
+  assert.equal((await call('word_count', { text: 'One two « three » \u2014 four' })).words, 4);
 });
 
 test('search: the chapter and the words around it, here and in every book', async () => {
@@ -304,11 +304,16 @@ test('a port another program holds: the window stays open and says so', async ()
   assert.equal((await post({ jsonrpc: '2.0', id: 1, method: 'ping' })).status, 200);
 });
 
-test('Show More Features off turns the server off; on brings it back', async () => {
-  await js('setMoreFeatures(false)');
+test('a library from before 2.0 with Show More Features on keeps the MCP server feature', async () => {
+  assert.equal(await js('library.features.mcp'), true);
+  assert.equal(await js("featureOn('mcp')"), true);
+});
+
+test('the MCP server feature off in Options turns the server off; on brings it back', async () => {
+  await js("setFeature('mcp', false)");
   await tick(400);
   await assert.rejects(fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' }));
-  await js('setMoreFeatures(true)');
+  await js("setFeature('mcp', true)");
   await tick(400);
   assert.equal((await post({ jsonrpc: '2.0', id: 1, method: 'ping' })).status, 200);
 });
@@ -359,7 +364,7 @@ async function main() {
     })()`);
     await tick(400);
     win.focus();
-    // the server comes up once the page says Show More Features is on
+    // the server comes up once the page says the mcp feature is on
     for (let i = 0; i < 100; i++) {
       const st = await js('window.neo.mcpStatus()');
       if (st.running) { token = st.token; break; }

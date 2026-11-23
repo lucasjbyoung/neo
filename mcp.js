@@ -1,4 +1,4 @@
-// NEO — the MCP server (File → MCP Server…, behind Show More Features)
+// NEO's MCP server (File → MCP Server…, the MCP server feature in Options)
 //
 // Lets an AI app on this computer (Claude, say) read the library while NEO
 // is open: the shelves, chapters, notes and outline, word counts, a search.
@@ -11,7 +11,7 @@
 // a browser can't reach it: a request from another origin is refused, and
 // so is one whose Host isn't this computer (DNS rebinding).
 //
-// The questions themselves are answered by the window (MCP in app.js), which
+// The questions themselves are answered by the window (app/mcp.js), which
 // already holds the open book, its unsaved words and NEO's own word count.
 // This file only speaks the protocol; it needs nothing from Electron, so the
 // tests run it under plain Node (scripts/mcp.test.js).
